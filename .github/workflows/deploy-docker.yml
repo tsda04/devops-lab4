@@ -12,6 +12,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        ref: docker-lab3  # Явно указываем ветку
       
     - name: Deploy to server with Docker
       uses: appleboy/ssh-action@v1.0.3
@@ -21,40 +23,85 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          # Останавливаем старый systemd сервис
+          echo "Starting Docker deployment..."
+          
+          # Обновляем код из правильной ветки
+          echo "Updating code from docker-lab3 branch..."
+          cd /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
+          git fetch origin
+          git checkout docker-lab3
+          git reset --hard origin/docker-lab3
+          
+          # Останавливаем старый systemd сервис с использованием sudo_password
           echo "Stopping old systemd service..."
-          systemctl stop devops-app 2>/dev/null || echo "Systemd service not running"
-          systemctl disable devops-app 2>/dev/null || echo "Systemd service already disabled"
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl stop devops-app 2>/dev/null || echo "Systemd service not running"
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl disable devops-app 2>/dev/null || echo "Systemd service already disabled"
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl daemon-reload 2>/dev/null || echo "Daemon reload not needed"
           
-          # Логинимся в registry
+          echo "Docker is ready"
+          
+          # Логинимся в GitHub Container Registry
           echo "Logging into GitHub Container Registry..."
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
-          # Останавливаем старый контейнер
+          # Останавливаем и удаляем старый контейнер
           echo "Cleaning up old containers..."
           docker stop devops-app 2>/dev/null || echo "No container to stop"
           docker rm devops-app 2>/dev/null || echo "No container to remove"
           
-          # Pull и запуск контейнера
+          # Pull образа из registry (пробуем разные теги)
           echo "Pulling Docker image..."
-          IMAGE_NAME="ghcr.io/${{ github.repository }}:latest"
-          docker pull $IMAGE_NAME
+          IMAGE_BASE="ghcr.io/${{ github.repository }}"
           
-          echo "🐳 Starting new container..."
+          if docker pull "$IMAGE_BASE:docker-lab3"; then
+            IMAGE_NAME="$IMAGE_BASE:docker-lab3"
+            echo "Using image: $IMAGE_NAME"
+          elif docker pull "$IMAGE_BASE:latest"; then
+            IMAGE_NAME="$IMAGE_BASE:latest"
+            echo "Using image: $IMAGE_NAME"
+          else
+            echo "No Docker image found in registry!"
+            echo "Available images: https://github.com/${{ github.repository }}/pkgs/container/devops-lab2"
+            exit 1
+          fi
+          
+          # Запускаем новый контейнер
+          echo "Starting new container..."
           docker run -d \
             --name devops-app \
             --restart unless-stopped \
             -p 8181:8181 \
+            -e FLASK_APP=app.py \
+            -e FLASK_ENV=production \
             $IMAGE_NAME
           
+          echo "Waiting for application to start..."
           sleep 10
           
-          # Проверка
-          if curl -f http://localhost:8181/; then
-            echo "Deployment successful!"
-            echo "http://app.tsyganova.course.prafdin.ru"
-          else
-            echo "Deployment failed"
-            docker logs devops-app
-            exit 1
-          fi
+          # Проверяем статус контейнера
+          echo "Checking container status..."
+          docker ps --filter "name=devops-app"
+          
+          # Проверяем логи
+          echo "Container logs (last 10 lines):"
+          docker logs devops-app --tail 10
+          
+          # Health check с повторными попытками
+          echo "🔍 Performing health check..."
+          for i in {1..3}; do
+            if curl -f http://localhost:8181; then
+              echo "Docker deployment completed successfully!"
+              echo "Application available at: http://app.tsyganova.course.prafdin.ru"
+              echo "Running in Docker container"
+              echo "Image: $IMAGE_NAME"
+              exit 0
+            else
+              echo "Health check attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+          done
+          
+          echo "Application health check failed after 3 attempts!"
+          echo "Debug information:"
+          docker logs devops-app
+          exit 1
