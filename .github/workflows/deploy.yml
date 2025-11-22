@@ -31,7 +31,7 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "🚀 Starting deployment..."
+          echo "Starting deployment..."
           
           # Создаем директорию
           mkdir -p /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
@@ -59,7 +59,7 @@ jobs:
           
           echo "Updating systemd service..."
           
-          echo "🔄 Restarting application..."
+          echo "Restarting application..."
           sudo systemctl daemon-reload
           sudo systemctl enable devops-app
           sudo systemctl restart devops-app
