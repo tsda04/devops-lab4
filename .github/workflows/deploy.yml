@@ -33,6 +33,26 @@ jobs:
         script: |
           echo "Starting deployment..."
           
+          echo "🐳 Stopping all Docker containers..."
+          if command -v docker &> /dev/null; then
+            echo "Stopping running Docker containers..."
+            docker stop $(docker ps -q) 2>/dev/null || echo "No containers to stop"
+            echo "Removing all Docker containers..."
+            docker rm $(docker ps -aq) 2>/dev/null || echo "No containers to remove"
+            echo "All Docker containers stopped and removed"
+          else
+            echo "Docker not installed, skipping container cleanup"
+          fi
+          
+          # Останавливаем Docker Compose проекты если есть
+          echo "Checking for Docker Compose projects..."
+          if command -v docker-compose &> /dev/null; then
+            find /home -name "docker-compose.yml" -exec dirname {} \; | while read dir; do
+              echo "Stopping Docker Compose in $dir"
+              cd "$dir" && docker-compose down 2>/dev/null || true
+            done
+          fi
+          
           # Создаем директорию
           mkdir -p /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
           cd /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
@@ -49,6 +69,7 @@ jobs:
           git fetch --all
           git reset --hard origin/main
           git clean -fd
+          git checkout main
           
           echo "Setting up Python environment..."
           python3 -m venv venv
