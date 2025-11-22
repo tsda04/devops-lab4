@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ docker-lab3 ]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -45,7 +49,7 @@ jobs:
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/docker-lab3')
+    if: github.event_name == 'push'
     
     permissions:
       contents: read
@@ -61,7 +65,7 @@ jobs:
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
-        registry: ghcr.io
+        registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUBTOKEN }}
         
@@ -69,15 +73,15 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/${{ github.repository }}
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
           type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha,prefix={{branch}}-
+          type=ref,event=tag
+          type=sha,prefix=
+          type=raw,value=latest,enable={{is_default_branch}}
         
     - name: Build and push Docker image
+      id: build-and-push
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -87,5 +91,8 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
         
-    - name: Image digest
-      run: echo ${{ steps.docker_build.outputs.digest }}
+    - name: Verify pushed image
+      run: |
+        echo "Image successfully pushed to GitHub Container Registry"
+        echo "Tags: ${{ steps.meta.outputs.tags }}"
+        echo "View at: https://github.com/${{ github.repository }}/pkgs/container/devops-lab2"
