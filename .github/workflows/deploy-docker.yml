@@ -57,4 +57,4 @@ jobs:
             echo "Deployment failed"
             docker logs devops-app
             exit 1
-          fi сделай пж сервис, чтобы обычный юзер мог его останавливать без sudo
+          fi
