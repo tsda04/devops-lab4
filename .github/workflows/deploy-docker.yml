@@ -1,0 +1,76 @@
+name: CD Pipeline with Docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:  # Ручной запуск
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to server with Docker
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: course.prafdin.ru
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 2467
+        script: |
+          echo "Starting Docker deployment..."
+          
+          # Останавливаем старый systemd сервис если он запущен
+          echo "Stopping old systemd service..."
+          sudo systemctl stop devops-app || true
+          sudo systemctl disable devops-app || true
+          
+          # Логинимся в GitHub Container Registry
+          echo "Logging into GitHub Container Registry..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          # Останавливаем и удаляем старый контейнер
+          echo "leaning up old containers..."
+          sudo docker stop devops-app || true
+          sudo docker rm devops-app || true
+          
+          # Pull образа из registry
+          echo "Pulling Docker image..."
+          IMAGE_NAME="ghcr.io/${{ github.repository }}:main"
+          sudo docker pull $IMAGE_NAME
+          
+          # Запускаем новый контейнер
+          echo "🐳 Starting new container..."
+          sudo docker run -d \
+            --name devops-app \
+            --restart unless-stopped \
+            -p 8181:8181 \
+            -e FLASK_APP=app.py \
+            -e FLASK_ENV=production \
+            $IMAGE_NAME
+          
+          echo "Waiting for application to start..."
+          sleep 10
+          
+          echo "Checking application status..."
+          # Проверяем статус контейнера
+          docker ps --filter "name=devops-app"
+          
+          # Проверяем логи
+          echo "Container logs:"
+          sudo docker logs devops-app --tail 10
+          
+          # Health check
+          if curl -f http://localhost:8181/health; then
+            echo "Docker deployment completed successfully!"
+            echo "Application available at: http://app.tsyganova.course.prafdin.ru"
+            echo "Running in Docker container: $(sudo docker ps --filter "name=devops-app" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}")"
+          else
+            echo "Application health check failed!"
+            echo "Checking container logs..."
+            sudo docker logs devops-app
+            exit 1
+          fi
