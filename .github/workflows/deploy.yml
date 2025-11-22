@@ -31,25 +31,51 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "Starting deployment..."
+          echo "🚀 Starting deployment..."
+          
+          # Создаем директорию
+          mkdir -p /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
           cd /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
           
+          # Инициализируем git если нужно
+          if [ ! -d .git ]; then
+            echo "Initializing git repository..."
+            git init
+            git remote add origin https://github.com/${{ github.repository }}.git
+            git config --global --add safe.directory /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
+          fi
+          
           echo "Pulling latest changes..."
-          git fetch origin
+          git fetch --all
           git reset --hard origin/main
+          git clean -fd
           
-          echo "Installing dependencies..."
-          python3 -m pip install -r requirements.txt
+          echo "Setting up Python environment..."
+          python3 -m venv venv
+          source venv/bin/activate
           
-          echo "Restarting application..."
+          echo "Installing Python dependencies..."
+          pip install -r requirements.txt
+          
+          echo "Updating systemd service..."
+          
+          echo "🔄 Restarting application..."
           sudo systemctl daemon-reload
+          sudo systemctl enable devops-app
           sudo systemctl restart devops-app
           
           echo "Waiting for application to start..."
-          sleep 5
+          sleep 8
           
           echo "Checking application status..."
-          curl -f http://localhost:8181/ || exit 1
+          sudo systemctl status devops-app --no-pager
           
-          echo "Deployment completed successfully!"
-          echo "Application available at: http://app.tsyganova.course.prafdin.ru"
+          if curl -f http://localhost:8181/; then
+            echo "Deployment completed successfully!"
+            echo "Application available at: http://app.tsyganova.course.prafdin.ru"
+          else
+            echo "Application health check failed!"
+            echo "Checking logs:"
+            sudo journalctl -u devops-app -n 20 --no-pager
+            exit 1
+          fi
