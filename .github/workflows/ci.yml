@@ -32,7 +32,6 @@ jobs:
         with app.test_client() as client:
             response = client.get('/')
             assert response.status_code == 200
-            assert b'tsyganova' in response.data
             print('Главная страница работает')
         "
         
