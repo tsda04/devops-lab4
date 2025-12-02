@@ -1,4 +1,4 @@
-name: CD Pipeline
+name: CD Pipeline with Docker Compose
 
 on:
   release:
@@ -8,12 +8,11 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Deploy with Docker Compose
+    - uses: actions/checkout@v4
+
+    - name: Deploy to server
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: course.prafdin.ru
@@ -21,133 +20,20 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "🚀 Starting Docker Compose deployment..."
-          
-          # Создаем директорию приложения
-          APP_DIR="/home/${{ secrets.SSH_USER }}/devops-lab4"
-          mkdir -p $APP_DIR
-          cd $APP_DIR
-          
-          # Создаем .env файл
-          cat > .env << 'EOF'
-          DB_HOST=db
-          DB_PORT=5432
-          DB_NAME=lab4db
-          DB_USER=postgres
-          DB_PASSWORD=postgres
-          POSTGRES_DB=lab4db
-          POSTGRES_USER=postgres
-          POSTGRES_PASSWORD=postgres
-          EOF
-          
-          # Создаем docker-compose.yml
-          cat > docker-compose.yml << 'EOF'
-          version: '3.8'
-          
-          services:
-            db:
-              image: postgres:15-alpine
-              environment:
-                POSTGRES_DB: lab4db
-                POSTGRES_USER: postgres
-                POSTGRES_PASSWORD: postgres
-              volumes:
-                - postgres_data:/var/lib/postgresql/data
-              networks:
-                - app-network
-              healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U postgres"]
-                interval: 10s
-                timeout: 5s
-                retries: 10
-              restart: unless-stopped
-          
-            web:
-              image: ghcr.io/${{ github.repository }}:latest
-              environment:
-                DB_HOST: db
-                DB_PORT: 5432
-                DB_NAME: lab4db
-                DB_USER: postgres
-                DB_PASSWORD: postgres
-              ports:
-                - "8181:5000"
-              depends_on:
-                db:
-                  condition: service_healthy
-              networks:
-                - app-network
-              restart: unless-stopped
-          
-          volumes:
-            postgres_data:
-          
-          networks:
-            app-network:
-              driver: bridge
-          EOF
-          
-          # Логинимся в GitHub Container Registry
-          echo "🔐 Logging into GitHub Container Registry..."
+          echo "Updating repo..."
+          cd /home/${{ secrets.SSH_USER }}/devops-lab4
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+
+          echo "Logging into GHCR..."
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
-          # Останавливаем и удаляем старые контейнеры
-          echo "🧹 Cleaning up old containers..."
-          docker-compose down --volumes --remove-orphans 2>/dev/null || true
-          
-          # Pull образа
-          echo "📥 Pulling Docker image..."
-          docker-compose pull web
-          
-          # Запускаем стек
-          echo "🚀 Starting Docker Compose stack..."
-          docker-compose up -d
-          
-          echo "⏳ Waiting for services to start (60 seconds)..."
-          sleep 60
-          
-          # Проверяем статус
-          echo "📊 Container status:"
-          docker-compose ps
-          
-          echo "📜 Checking logs..."
-          docker-compose logs --tail=20 web
-          docker-compose logs --tail=10 db
-          
-          # Health check с несколькими попытками
-          echo "🔍 Health check (with retries)..."
-          MAX_RETRIES=10
-          for i in $(seq 1 $MAX_RETRIES); do
-            echo "Attempt $i/$MAX_RETRIES..."
-            
-            # Проверяем здоровье базы данных
-            DB_HEALTH=$(docker-compose exec -T db pg_isready -U postgres 2>/dev/null | grep "accepting connections" || echo "not ready")
-            
-            # Проверяем приложение
-            if curl -s -f http://localhost:8181/health > /dev/null; then
-              echo "✅ Application health check passed!"
-              echo "✅ Database status: $DB_HEALTH"
-              
-              # Выводим информацию о контейнерах
-              echo "📦 Running containers:"
-              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-              
-              echo "🎉 Deployment successful!"
-              echo "🌐 Application available at: http://app.tsyganova.course.prafdin.ru"
-              echo "🔗 Health check: http://app.tsyganova.course.prafdin.ru/health"
-              exit 0
-            else
-              echo "⏳ Health check failed, retrying in 10 seconds..."
-              sleep 10
-            fi
-          done
-          
-          echo "❌ Health check failed after $MAX_RETRIES attempts!"
-          echo "🔍 Debug information:"
-          echo "=== Web container logs ==="
-          docker-compose logs web
-          echo "=== DB container logs ==="
-          docker-compose logs db
-          echo "=== Network information ==="
-          docker network inspect devops-lab4_app-network || echo "Network not found"
-          exit 1
+
+          echo "Pulling new images..."
+          docker compose pull
+
+          echo "Restarting stack..."
+          docker compose down
+          docker compose up -d
+
+          echo "Deployment finished!"
