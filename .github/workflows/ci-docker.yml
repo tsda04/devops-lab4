@@ -1,10 +1,10 @@
-name: CI Pipeline with Docker
+name: CI Pipeline with Docker Compose
 
 on:
   push:
-    branches: [ docker-lab3 ]
+    branches: [ main, docker-lab4 ]
   pull_request:
-    branches: [ docker-lab3 ]
+    branches: [ main, docker-lab4 ]
 
 env:
   REGISTRY: ghcr.io
@@ -36,7 +36,11 @@ jobs:
         with app.test_client() as client:
             response = client.get('/')
             assert response.status_code == 200
-            print('Главная страница работает')
+            print('✓ Главная страница работает')
+            
+            response = client.get('/visits')
+            assert response.status_code == 200
+            print('✓ Статистика посещений работает')
         "
         
     - name: Lint Dockerfile
@@ -45,6 +49,10 @@ jobs:
         curl -sSfL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o hadolint
         chmod +x hadolint
         ./hadolint Dockerfile
+        
+    - name: Validate Docker Compose
+      run: |
+        docker compose config
 
   build-and-push:
     needs: test
@@ -95,4 +103,4 @@ jobs:
       run: |
         echo "Image successfully pushed to GitHub Container Registry"
         echo "Tags: ${{ steps.meta.outputs.tags }}"
-        echo "View at: https://github.com/${{ github.repository }}/pkgs/container/devops-lab2"
+        echo "View at: https://github.com/${{ github.repository }}/pkgs/container/$(echo ${{ github.repository }} | tr '/' '-')"
