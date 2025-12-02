@@ -2,17 +2,13 @@ version: "3.9"
 
 services:
   db-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.db
+    image: ghcr.io/tsda04/devops-lab4:latest
     volumes:
       - data_volume:/data
-    command: ["python", "/init_db.py"]
+    command: ["python", "init_db.py"]
 
   flask-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/tsda04/devops-lab4:latest
     volumes:
       - data_volume:/data
     ports:
