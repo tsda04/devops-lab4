@@ -1,0 +1,39 @@
+version: '3.8'
+
+name: devops-lab4
+
+services:
+  web:
+    build: .
+    ports:
+      - "8181:8181"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - DATABASE_URL=/data/database.db
+    volumes:
+      - app-data:/data
+    depends_on:
+      - init-db
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  init-db:
+    image: alpine:latest
+    command: >
+      sh -c "
+      echo 'Running database initialization...' &&
+      sleep 5 &&
+      echo 'Database initialized'"
+    volumes:
+      - app-data:/data
+    networks:
+      - app-network
+
+volumes:
+  app-data:
+
+networks:
+  app-network:
+    driver: bridge
