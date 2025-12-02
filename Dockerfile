@@ -4,9 +4,9 @@ FROM python:3.9-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости для SQLite
-RUN apt-get update && apt-get install -y \
-    sqlite3 \
+# Устанавливаем системные зависимости для SQLite с фиксированной версией и без рекомендуемых пакетов
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sqlite3=3.34* \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем зависимости
