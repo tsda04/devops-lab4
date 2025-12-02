@@ -1,19 +1,19 @@
-name: CD Pipeline
+name: CD Deploy
 
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Deploy to server with Docker Compose
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Deploy to server
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: course.prafdin.ru
@@ -21,139 +21,20 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "Starting Docker Compose deployment..."
-          
-          # Создаем директорию для проекта
-          mkdir -p /home/${{ secrets.SSH_USER }}/devops-lab4
           cd /home/${{ secrets.SSH_USER }}/devops-lab4
           
-          # Копируем docker-compose.prod.yml
-          echo "Copying docker-compose.prod.yml..."
-          cat > docker-compose.prod.yml << 'EOF'
-          version: '3.8'
-          
-          services:
-            db:
-              image: postgres:15-alpine
-              environment:
-                POSTGRES_DB: ${{ secrets.DB_NAME }}
-                POSTGRES_USER: ${{ secrets.DB_USER }}
-                POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
-              volumes:
-                - postgres_data:/var/lib/postgresql/data
-              restart: unless-stopped
-              healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U ${{ secrets.DB_USER }}"]
-                interval: 10s
-                timeout: 5s
-                retries: 5
-          
-            app:
-              image: ghcr.io/${{ github.repository }}:latest
-              environment:
-                DB_HOST: db
-                DB_NAME: ${{ secrets.DB_NAME }}
-                DB_USER: ${{ secrets.DB_USER }}
-                DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-              restart: unless-stopped
-              depends_on:
-                db:
-                  condition: service_healthy
-          
-            nginx:
-              image: nginx:alpine
-              ports:
-                - "8181:80"
-              volumes:
-                - nginx_config:/etc/nginx/nginx.conf:ro
-              depends_on:
-                - app
-              restart: unless-stopped
-          
-          volumes:
-            postgres_data:
-            nginx_config:
-          EOF
-          
-          # Создаем nginx конфиг
-          mkdir -p nginx
-          cat > nginx/nginx.conf << 'EOF'
-          events {
-              worker_connections 1024;
-          }
-          
-          http {
-              upstream app_servers {
-                  server app:5000;
-              }
-          
-              server {
-                  listen 80;
-                  server_name _;
-          
-                  location / {
-                      proxy_pass http://app_servers;
-                      proxy_set_header Host $host;
-                      proxy_set_header X-Real-IP $remote_addr;
-                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                      proxy_set_header X-Forwarded-Proto $scheme;
-                  }
-          
-                  location /health {
-                      proxy_pass http://app_servers/health;
-                      access_log off;
-                  }
-              }
-          }
-          EOF
-          
-          # Логинимся в GitHub Container Registry
-          echo "Logging into GitHub Container Registry..."
+          echo "Updating repo..."
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+
+          echo "Login to GHCR"
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
-          # Создаем volume для nginx конфига
-          echo "Creating nginx config volume..."
-          docker volume create nginx_config || true
-          
-          # Копируем nginx конфиг в volume
-          echo "Copying nginx config to volume..."
-          docker run --rm -v nginx_config:/target -v $(pwd)/nginx/nginx.conf:/nginx.conf alpine sh -c "cp /nginx.conf /target/nginx.conf"
-          
-          # Останавливаем и удаляем старый стек
-          echo "Stopping old stack..."
-          docker compose -f docker-compose.prod.yml down || true
-          
-          # Pull последнего образа
+
           echo "Pulling latest image..."
           docker pull ghcr.io/${{ github.repository }}:latest
-          
-          # Запускаем новый стек
-          echo "Starting new stack with Docker Compose..."
-          docker compose -f docker-compose.prod.yml up -d
-          
-          echo "Waiting for services to start..."
-          sleep 15
-          
-          # Проверяем статус
-          echo "Checking container status..."
-          docker compose -f docker-compose.prod.yml ps
-          
-          # Health check
-          echo "🔍 Performing health check..."
-          for i in {1..5}; do
-            if curl -f http://localhost:8181/health; then
-              echo "✅ Deployment successful!"
-              echo "🌐 Application available at: http://app.tsyganova.course.prafdin.ru:8181"
-              echo "📊 Health check: http://app.tsyganova.course.prafdin.ru:8181/health"
-              echo "📈 Visit counter: http://app.tsyganova.course.prafdin.ru:8181/visit"
-              exit 0
-            else
-              echo "⏳ Health check attempt $i failed, retrying in 5 seconds..."
-              sleep 5
-            fi
-          done
-          
-          echo "❌ Health check failed after 5 attempts!"
-          echo "Debug info:"
-          docker compose -f docker-compose.prod.yml logs
-          exit 1
+
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker compose down
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker compose up -d --force-recreate
+
+          echo "Deployment finished."
