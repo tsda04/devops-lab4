@@ -28,22 +28,25 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Копируем файлы docker-compose (без замены volumes)
-          echo "📋 Copying docker-compose files..."
+          # Создаем .env файл
+          cat > .env << 'EOF'
+          DB_HOST=db
+          DB_PORT=5432
+          DB_NAME=lab4db
+          DB_USER=postgres
+          DB_PASSWORD=postgres
+          POSTGRES_DB=lab4db
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          EOF
           
-          # Останавливаем текущий стек если есть
-          if [ -f docker-compose.yml ]; then
-            echo "⏹️  Stopping existing stack..."
-            docker-compose down || true
-          fi
-          
-          # Создаем docker-compose.yml на сервере
+          # Создаем docker-compose.yml
           cat > docker-compose.yml << 'EOF'
           version: '3.8'
-
+          
           services:
             db:
-              image: postgres:13-alpine
+              image: postgres:15-alpine
               environment:
                 POSTGRES_DB: lab4db
                 POSTGRES_USER: postgres
@@ -56,9 +59,9 @@ jobs:
                 test: ["CMD-SHELL", "pg_isready -U postgres"]
                 interval: 10s
                 timeout: 5s
-                retries: 5
+                retries: 10
               restart: unless-stopped
-
+          
             web:
               image: ghcr.io/${{ github.repository }}:latest
               environment:
@@ -75,10 +78,10 @@ jobs:
               networks:
                 - app-network
               restart: unless-stopped
-
+          
           volumes:
             postgres_data:
-
+          
           networks:
             app-network:
               driver: bridge
@@ -88,6 +91,10 @@ jobs:
           echo "🔐 Logging into GitHub Container Registry..."
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
+          # Останавливаем и удаляем старые контейнеры
+          echo "🧹 Cleaning up old containers..."
+          docker-compose down --volumes --remove-orphans 2>/dev/null || true
+          
           # Pull образа
           echo "📥 Pulling Docker image..."
           docker-compose pull web
@@ -96,29 +103,51 @@ jobs:
           echo "🚀 Starting Docker Compose stack..."
           docker-compose up -d
           
-          echo "⏳ Waiting for services to start..."
-          sleep 15
+          echo "⏳ Waiting for services to start (60 seconds)..."
+          sleep 60
           
           # Проверяем статус
           echo "📊 Container status:"
           docker-compose ps
           
-          # Health check
-          echo "🔍 Health check..."
-          for i in {1..5}; do
-            if curl -f http://localhost:8181/health; then
-              echo "✅ Deployment successful!"
+          echo "📜 Checking logs..."
+          docker-compose logs --tail=20 web
+          docker-compose logs --tail=10 db
+          
+          # Health check с несколькими попытками
+          echo "🔍 Health check (with retries)..."
+          MAX_RETRIES=10
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i/$MAX_RETRIES..."
+            
+            # Проверяем здоровье базы данных
+            DB_HEALTH=$(docker-compose exec -T db pg_isready -U postgres 2>/dev/null | grep "accepting connections" || echo "not ready")
+            
+            # Проверяем приложение
+            if curl -s -f http://localhost:8181/health > /dev/null; then
+              echo "✅ Application health check passed!"
+              echo "✅ Database status: $DB_HEALTH"
+              
+              # Выводим информацию о контейнерах
+              echo "📦 Running containers:"
+              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+              
+              echo "🎉 Deployment successful!"
               echo "🌐 Application available at: http://app.tsyganova.course.prafdin.ru"
+              echo "🔗 Health check: http://app.tsyganova.course.prafdin.ru/health"
               exit 0
             else
-              echo "⏳ Attempt $i failed, retrying in 5 seconds..."
-              sleep 5
+              echo "⏳ Health check failed, retrying in 10 seconds..."
+              sleep 10
             fi
           done
           
-          echo "❌ Health check failed!"
-          echo "📜 Logs from web service:"
+          echo "❌ Health check failed after $MAX_RETRIES attempts!"
+          echo "🔍 Debug information:"
+          echo "=== Web container logs ==="
           docker-compose logs web
-          echo "📜 Logs from db service:"
+          echo "=== DB container logs ==="
           docker-compose logs db
+          echo "=== Network information ==="
+          docker network inspect devops-lab4_app-network || echo "Network not found"
           exit 1
