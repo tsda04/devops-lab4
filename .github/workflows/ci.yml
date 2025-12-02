@@ -1,12 +1,10 @@
-name: CI Pipeline with Docker Compose
+name: CI Pipeline
 
 on:
   push:
-    branches: [ main, lab4 ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, lab4 ]
-  release:
-    types: [published]
+    branches: [ main ]
 
 env:
   REGISTRY: ghcr.io
@@ -16,6 +14,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
     
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -27,23 +40,39 @@ jobs:
         
     - name: Install dependencies
       run: |
+        cd app
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install pytest
         
     - name: Run basic tests
       run: |
-        python -c "
-        print('✅ Тесты проходят успешно')
+        cd app
+        DB_HOST=localhost DB_NAME=test_db DB_USER=test_user DB_PASSWORD=test_password python -c "
+        from app import app
+        with app.test_client() as client:
+            # Тест главной страницы
+            response = client.get('/')
+            assert response.status_code == 200
+            print('Главная страница работает')
+            
+            # Тест health check
+            response = client.get('/health')
+            assert response.status_code == 200
+            print('Health check работает')
         "
         
     - name: Lint Dockerfile
       run: |
-        docker run --rm -i hadolint/hadolint < Dockerfile || echo "Hadolint проверка завершена"
+        # Устанавливаем hadolint
+        curl -sSfL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o hadolint
+        chmod +x hadolint
+        ./hadolint app/Dockerfile
 
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/lab4')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     permissions:
       contents: read
@@ -70,7 +99,6 @@ jobs:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
           type=ref,event=branch
-          type=ref,event=tag
           type=sha,prefix=
           type=raw,value=latest,enable={{is_default_branch}}
         
@@ -78,7 +106,7 @@ jobs:
       id: build-and-push
       uses: docker/build-push-action@v5
       with:
-        context: .
+        context: ./app
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
@@ -87,6 +115,6 @@ jobs:
         
     - name: Verify pushed image
       run: |
-        echo "✅ Образ успешно загружен в GitHub Container Registry"
-        echo "🏷️ Теги: ${{ steps.meta.outputs.tags }}"
-        echo "🔗 Ссылка: https://github.com/${{ github.repository }}/pkgs/container/$(echo ${{ github.repository }} | tr '/' '%2F')"
+        echo "Image successfully pushed to GitHub Container Registry"
+        echo "Tags: ${{ steps.meta.outputs.tags }}"
+        echo "View at: https://github.com/${{ github.repository }}/pkgs/container/$(echo ${{ github.repository }} | cut -d'/' -f2-)"
