@@ -1,23 +1,44 @@
-name: devops-lab4
+version: '3.8'
 
 services:
-  web:
-    build: ./app
-    container_name: lab4-web
-    ports:
-      - "8181:8181"
+  db:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_DB: lab4db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     volumes:
-      - db-data:/data
-    depends_on:
-      - adminer
-    pull_policy: always
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  adminer:
-    image: adminer
-    container_name: lab4-adminer
+  web:
+    build: .
+    image: ghcr.io/${{ github.repository }}:latest
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: lab4db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
     ports:
-      - "8080:8080"
-    pull_policy: always
+      - "8181:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
 
 volumes:
-  db-data:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
