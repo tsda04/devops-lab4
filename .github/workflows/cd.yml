@@ -23,16 +23,36 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "🚀 Начинаем деплой с Docker Compose..."
+          echo "🚀 Начинаем деплой мультиконтейнерного приложения..."
+          echo "📊 Компоненты: Flask + PostgreSQL"
           
           # Создаем/переходим в директорию проекта
           echo "📁 Настраиваем рабочую директорию..."
           mkdir -p /home/${{ secrets.SSH_USER }}/devops-lab4
           cd /home/${{ secrets.SSH_USER }}/devops-lab4
           
-          # Копируем docker-compose файл с GitHub
-          echo "📋 Копируем docker-compose файл..."
-          cat > docker-compose.yml << 'EOF'
+          # Создаем SQL файл для инициализации БД
+          echo "🗄️ Создаем init-db.sql..."
+          cat > init-db.sql << 'SQL_EOF'
+          -- Создаем базу данных
+          CREATE DATABASE appdb;
+          
+          -- Создаем пользователя
+          CREATE USER appuser WITH ENCRYPTED PASSWORD 'apppassword';
+          
+          -- Даем права пользователю
+          GRANT ALL PRIVILEGES ON DATABASE appdb TO appuser;
+          
+          -- Подключаемся к базе данных
+          \c appdb
+          
+          -- Даем права на схемы
+          GRANT ALL ON SCHEMA public TO appuser;
+          SQL_EOF
+          
+          # Создаем docker-compose файл
+          echo "📋 Создаем docker-compose.yml..."
+          cat > docker-compose.yml << 'COMPOSE_EOF'
           version: '3.8'
           
           services:
@@ -42,29 +62,50 @@ jobs:
               ports:
                 - "8181:8181"
               depends_on:
-                - db
+                db:
+                  condition: service_healthy
               environment:
                 - FLASK_ENV=production
-              volumes:
-                - app_data:/data
+                - DB_HOST=db
+                - DB_PORT=5432
+                - DB_NAME=appdb
+                - DB_USER=appuser
+                - DB_PASSWORD=apppassword
               networks:
                 - app-network
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+                start_period: 40s
           
             db:
-              image: nouchka/sqlite3:latest
+              image: postgres:15-alpine
               restart: always
+              environment:
+                - POSTGRES_DB=appdb
+                - POSTGRES_USER=appuser
+                - POSTGRES_PASSWORD=apppassword
+                - POSTGRES_INITDB_ARGS=--encoding=UTF-8
               volumes:
-                - app_data:/data
+                - postgres_data:/var/lib/postgresql/data
+                - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
               networks:
                 - app-network
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
           
           volumes:
-            app_data:
+            postgres_data:
           
           networks:
             app-network:
               driver: bridge
-          EOF
+          COMPOSE_EOF
           
           echo "📄 Содержимое docker-compose.yml:"
           cat docker-compose.yml
@@ -73,71 +114,103 @@ jobs:
           echo "🔐 Логинимся в GitHub Container Registry..."
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
-          # Останавливаем и удаляем старые контейнеры
+          # Останавливаем и удаляем старые контейнеры (сохраняем volume)
           echo "🧹 Очищаем старые контейнеры..."
           docker-compose down 2>/dev/null || echo "Контейнеров для остановки нет"
           
-          # Удаляем старые образы
-          echo "🗑️ Удаляем старые образы..."
+          # Удаляем старый образ web приложения
+          echo "🗑️ Удаляем старый образ web..."
           docker rmi ghcr.io/${{ github.repository }}:latest 2>/dev/null || echo "Образов для удаления нет"
           
-          # Подтягиваем свежий образ (используем latest тег)
-          echo "📦 Загружаем свежий образ..."
+          # Подтягиваем свежий образ web приложения
+          echo "📦 Загружаем свежий образ web приложения..."
           docker pull ghcr.io/${{ github.repository }}:latest
+          
+          # Подтягиваем образ PostgreSQL
+          echo "🐘 Загружаем образ PostgreSQL..."
+          docker pull postgres:15-alpine
           
           # Запускаем приложение через Docker Compose
           echo "🚀 Запускаем Docker Compose..."
           docker-compose up -d
           
           # Ждем запуска
-          echo "⏳ Ждем запуска приложения..."
-          sleep 15
+          echo "⏳ Ждем запуска приложения (60 секунд)..."
+          sleep 60
           
           # Проверяем статус
           echo "📊 Статус контейнеров:"
           docker-compose ps
           
           echo "📝 Логи контейнера web:"
-          docker-compose logs --tail=10 web
+          docker-compose logs --tail=20 web
           
           echo "📝 Логи контейнера db:"
-          docker-compose logs --tail=5 db
+          docker-compose logs --tail=10 db
           
-          # Health check
-          echo "🔍 Проверяем работоспособность..."
-          for i in {1..10}; do
-            echo "Попытка $i/10..."
-            if curl -f http://localhost:8181; then
-              echo ""
-              echo "✅ Приложение успешно запущено!"
-              echo "🌐 Доступно по адресу: http://app.tsyganova.course.prafdin.ru"
-              echo "📊 Статистика посещений: http://app.tsyganova.course.prafdin.ru/visits"
-              echo ""
-              echo "📋 Информация о контейнерах:"
-              echo "1. Web контейнер (Flask): $(docker-compose ps web | grep Up)"
-              echo "2. DB контейнер (SQLite): $(docker-compose ps db | grep Up)"
-              echo "3. Сеть: $(docker network ls | grep devops-lab4)"
-              echo "4. Volume: $(docker volume ls | grep devops-lab4)"
-              exit 0
-            else
-              echo "Попытка $i не удалась, ждем 3 секунды..."
-              sleep 3
+          # Проверяем health status
+          echo "🩺 Проверяем health status контейнеров..."
+          echo "Web health: $(docker inspect --format='{{.State.Health.Status}}' devops-lab4-web 2>/dev/null || echo 'Не найден')"
+          echo "DB health: $(docker inspect --format='{{.State.Health.Status}}' devops-lab4-db 2>/dev/null || echo 'Не найден')"
+          
+          # Health check с повторными попытками
+          echo "🔍 Проверяем работоспособность приложения..."
+          for i in {1..15}; do
+            echo "Попытка $i/15..."
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8181/health || true)
+            if [ "$RESPONSE" = "200" ]; then
+              DB_RESPONSE=$(curl -s http://localhost:8181/db-status | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+              if [ "$DB_RESPONSE" = "connected" ]; then
+                echo ""
+                echo "✅ Приложение успешно запущено!"
+                echo "✅ База данных подключена!"
+                echo ""
+                echo "🌐 Доступно по адресу: http://app.tsyganova.course.prafdin.ru"
+                echo "📊 Статистика посещений: http://app.tsyganova.course.prafdin.ru/visits"
+                echo "🛠️  Статус БД: http://app.tsyganova.course.prafdin.ru/db-status"
+                echo ""
+                echo "📋 Информация о контейнерах:"
+                docker-compose ps
+                echo ""
+                echo "💾 Volume:"
+                docker volume ls | grep devops-lab4
+                echo ""
+                echo "🌐 Сеть:"
+                docker network ls | grep devops-lab4
+                echo ""
+                echo "🐳 Образы:"
+                docker images | grep -E "(ghcr.io|postgres)"
+                exit 0
+              else
+                echo "Приложение отвечает, но БД не подключена. Ждем..."
+              fi
             fi
+            echo "Попытка $i не удалась (код: $RESPONSE), ждем 5 секунд..."
+            sleep 5
           done
           
-          echo "❌ Приложение не запустилось после 10 попыток"
+          echo "❌ Приложение не запустилось после 15 попыток"
           echo ""
           echo "🔍 Диагностика:"
           echo "1. Проверяем, запущены ли контейнеры:"
-          docker ps -a | grep devops-lab4
+          docker ps -a
           echo ""
-          echo "2. Проверяем логи:"
-          docker-compose logs
+          echo "2. Проверяем логи web:"
+          docker-compose logs web
           echo ""
-          echo "3. Проверяем сеть:"
-          docker network inspect devops-lab4_app-network 2>/dev/null || echo "Сеть не найдена"
+          echo "3. Проверяем логи db:"
+          docker-compose logs db
           echo ""
-          echo "4. Проверяем volume:"
-          docker volume inspect devops-lab4_app-data 2>/dev/null || echo "Volume не найден"
+          echo "4. Проверяем, доступен ли порт 8181:"
+          netstat -tlnp | grep 8181 || echo "Порт 8181 не слушается"
+          echo ""
+          echo "5. Проверяем, доступен ли порт 5432:"
+          netstat -tlnp | grep 5432 || echo "Порт 5432 не слушается"
+          echo ""
+          echo "6. Пробуем подключиться к PostgreSQL из контейнера web:"
+          docker exec devops-lab4-web pg_isready -h db -U appuser -d appdb 2>/dev/null || echo "Не удалось подключиться к БД"
+          echo ""
+          echo "7. Проверяем volume:"
+          docker volume inspect devops-lab4_postgres_data 2>/dev/null || echo "Volume не найден"
           
           exit 1
