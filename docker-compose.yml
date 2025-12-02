@@ -1,5 +1,3 @@
-name: devops-lab4
-
 services:
 
   db-init:
