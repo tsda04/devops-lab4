@@ -1,4 +1,4 @@
-name: CD Pipeline with Docker
+name: CD Pipeline with Docker Compose
 
 on:
   release:
@@ -13,9 +13,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        ref: docker-lab3  # Явно указываем ветку
+        ref: main  # Или docker-lab4 в зависимости от вашей ветки
       
-    - name: Deploy to server with Docker
+    - name: Deploy to server with Docker Compose
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: course.prafdin.ru
@@ -23,85 +23,65 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          echo "Starting Docker deployment..."
+          echo "🚀 Starting Docker Compose deployment..."
           
-          # Обновляем код из правильной ветки
-          echo "Updating code from docker-lab3 branch..."
-          cd /home/${{ secrets.SSH_USER }}/devops-lab-tsyganova
+          # Обновляем код
+          echo "📥 Updating code..."
+          cd /home/${{ secrets.SSH_USER }}/devops-lab4
           git fetch origin
-          git checkout docker-lab3
-          git reset --hard origin/docker-lab3
-          
-          # Останавливаем старый systemd сервис с использованием sudo_password
-          echo "Stopping old systemd service..."
-          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl stop devops-app 2>/dev/null || echo "Systemd service not running"
-          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl disable devops-app 2>/dev/null || echo "Systemd service already disabled"
-          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S systemctl daemon-reload 2>/dev/null || echo "Daemon reload not needed"
-          
-          echo "Docker is ready"
+          git reset --hard origin/main
           
           # Логинимся в GitHub Container Registry
-          echo "Logging into GitHub Container Registry..."
+          echo "🔑 Logging into GitHub Container Registry..."
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
-          # Останавливаем и удаляем старый контейнер
-          echo "Cleaning up old containers..."
-          docker stop devops-app 2>/dev/null || echo "No container to stop"
-          docker rm devops-app 2>/dev/null || echo "No container to remove"
+          # Останавливаем и удаляем старый стек
+          echo "🧹 Cleaning up old stack..."
+          docker compose down --volumes --remove-orphans 2>/dev/null || echo "No stack to clean up"
           
-          # Pull образа из registry (пробуем разные теги)
-          echo "Pulling Docker image..."
-          IMAGE_BASE="ghcr.io/${{ github.repository }}"
+          # Pull образа
+          echo "⬇️ Pulling Docker image..."
+          IMAGE_NAME="ghcr.io/${{ github.repository }}:main"
           
-          if docker pull "$IMAGE_BASE:docker-lab3"; then
-            IMAGE_NAME="$IMAGE_BASE:docker-lab3"
-            echo "Using image: $IMAGE_NAME"
-          elif docker pull "$IMAGE_BASE:latest"; then
-            IMAGE_NAME="$IMAGE_BASE:latest"
-            echo "Using image: $IMAGE_NAME"
-          else
-            echo "No Docker image found in registry!"
-            echo "Available images: https://github.com/${{ github.repository }}/pkgs/container/devops-lab2"
-            exit 1
+          if ! docker pull "$IMAGE_NAME"; then
+            echo "⚠️  Trying latest tag..."
+            IMAGE_NAME="ghcr.io/${{ github.repository }}:latest"
+            docker pull "$IMAGE_NAME" || echo "⚠️  Could not pull image, will build locally"
           fi
           
-          # Запускаем новый контейнер
-          echo "Starting new container..."
-          docker run -d \
-            --name devops-app \
-            --restart unless-stopped \
-            -p 8181:8181 \
-            -e FLASK_APP=app.py \
-            -e FLASK_ENV=production \
-            $IMAGE_NAME
+          # Запускаем новый стек
+          echo "🚀 Starting Docker Compose stack..."
+          docker compose up -d
           
-          echo "Waiting for application to start..."
-          sleep 10
+          echo "⏳ Waiting for services to start..."
+          sleep 15
           
-          # Проверяем статус контейнера
-          echo "Checking container status..."
-          docker ps --filter "name=devops-app"
+          # Проверяем статус
+          echo "📊 Checking stack status..."
+          docker compose ps
           
           # Проверяем логи
-          echo "Container logs (last 10 lines):"
-          docker logs devops-app --tail 10
+          echo "📝 Container logs:"
+          docker compose logs --tail=10
           
-          # Health check с повторными попытками
-          echo "Performing health check..."
-          for i in {1..3}; do
+          # Health check
+          echo "🔍 Performing health check..."
+          for i in {1..5}; do
             if curl -f http://localhost:8181; then
-              echo "Docker deployment completed successfully!"
-              echo "Application available at: http://app.tsyganova.course.prafdin.ru"
-              echo "Running in Docker container"
-              echo "Image: $IMAGE_NAME"
+              echo ""
+              echo "✅ Docker Compose deployment completed successfully!"
+              echo "🌐 Application available at: http://app.tsyganova.course.prafdin.ru"
+              echo "🐳 Running with Docker Compose"
+              echo "💾 Using SQLite database with persistent volume"
+              echo "📈 Check visits: http://app.tsyganova.course.prafdin.ru/visits"
               exit 0
             else
-              echo "Health check attempt $i failed, retrying in 5 seconds..."
+              echo "⚠️  Health check attempt $i failed, retrying in 5 seconds..."
               sleep 5
             fi
           done
           
-          echo "Application health check failed after 3 attempts!"
-          echo "Debug information:"
-          docker logs devops-app
+          echo "❌ Application health check failed after 5 attempts!"
+          echo "🐛 Debug information:"
+          docker compose logs
           exit 1
