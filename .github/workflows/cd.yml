@@ -19,21 +19,36 @@ jobs:
         username: ${{ secrets.SSH_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
+
         script: |
-          echo "Updating repo..."
-          cd /home/${{ secrets.SSH_USER }}/devops-lab4
+          set -e
+
+          REPO_PATH="/home/${{ secrets.SSH_USER }}/devops-lab4"
+          REPO_URL="git@github.com:${{ github.repository }}.git"
+
+          echo "---- CHECK REPOSITORY ----"
+          if [ ! -d "$REPO_PATH/.git" ]; then
+            echo "Repository not found. Cloning..."
+            git clone "$REPO_URL" "$REPO_PATH"
+          fi
+
+          echo "---- UPDATE REPOSITORY ----"
+          cd "$REPO_PATH"
           git fetch origin
           git checkout main
           git reset --hard origin/main
 
-          echo "Logging into GHCR..."
+          echo "---- LOGIN TO GHCR ----"
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-          echo "Pulling new images..."
-          docker compose pull
+          echo "---- PULL IMAGES ----"
+          docker compose pull || true
 
-          echo "Restarting stack..."
+          echo "---- RESTART DOCKER COMPOSE ----"
           docker compose down
           docker compose up -d
 
-          echo "Deployment finished!"
+          echo "---- SHOW RUNNING SERVICES ----"
+          docker compose ps
+
+          echo "---- DEPLOY COMPLETE ----"
