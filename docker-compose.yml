@@ -1,43 +1,23 @@
-version: '3.8'
+name: devops-lab4
 
 services:
-  db:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_DB: devops_db
-      POSTGRES_USER: devops_user
-      POSTGRES_PASSWORD: devops_password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devops_user"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  app:
+  web:
     build: ./app
-    environment:
-      DB_HOST: db
-      DB_NAME: devops_db
-      DB_USER: devops_user
-      DB_PASSWORD: devops_password
-    depends_on:
-      db:
-        condition: service_healthy
+    container_name: lab4-web
     ports:
-      - "5000:5000"
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
+      - "8181:8181"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - db-data:/data
     depends_on:
-      - app
+      - adminer
+    pull_policy: always
+
+  adminer:
+    image: adminer
+    container_name: lab4-adminer
+    ports:
+      - "8080:8080"
+    pull_policy: always
 
 volumes:
-  postgres_data:
+  db-data:
