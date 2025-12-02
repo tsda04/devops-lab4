@@ -1,8 +1,8 @@
 name: CD Pipeline with Docker Compose
 
 on:
-  push:
-    branches: [ main, lab4 ]
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.release.tag_name || 'main' }}
       
     - name: Deploy with Docker Compose
       uses: appleboy/ssh-action@v1.0.3
@@ -79,7 +81,7 @@ jobs:
           echo "🗑️ Удаляем старые образы..."
           docker rmi ghcr.io/${{ github.repository }}:latest 2>/dev/null || echo "Образов для удаления нет"
           
-          # Подтягиваем свежий образ
+          # Подтягиваем свежий образ (используем latest тег)
           echo "📦 Загружаем свежий образ..."
           docker pull ghcr.io/${{ github.repository }}:latest
           
