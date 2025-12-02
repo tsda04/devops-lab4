@@ -1,4 +1,4 @@
-name: CD Pipeline with Docker Compose
+name: CD Pipeline
 
 on:
   release:
@@ -8,10 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-
     - name: Deploy to server
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -19,41 +16,20 @@ jobs:
         username: ${{ secrets.SSH_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
-
         script: |
-          set -e
-
-          REPO_PATH="/home/${{ secrets.SSH_USER }}/devops-lab4"
-          REPO_URL="git@github.com:${{ github.repository }}.git"
-
-          echo "---- CHECK REPOSITORY ----"
-          if [ ! -d "$REPO_PATH/.git" ]; then
-            echo "Repository not found. Cloning..."
-            git clone "$REPO_URL" "$REPO_PATH"
-          fi
-
-          echo "---- UPDATE REPOSITORY ----"
-          cd "$REPO_PATH"
-          git fetch origin
-          git checkout main
-          git reset --hard origin/main
-
-          echo "---- FULL CLEANUP (STOP EVERYTHING) ----"
-          docker stop $(docker ps -aq) || true
-          docker rm -f $(docker ps -aq) || true
-          docker network prune -f || true
-          docker volume prune -f || true
-
-          echo "---- LOGIN TO GHCR ----"
+          cd ~/devops-lab4
+          
+          # Обновляем код
+          git pull origin main
+          
+          # Логинимся в реестр
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-          echo "---- PULL IMAGES ----"
-          docker-compose pull || true
-
-          echo "---- START DOCKER COMPOSE ----"
+          
+          # Останавливаем старые контейнеры
+          docker-compose down
+          
+          # Запускаем новые
+          docker-compose pull
           docker-compose up -d
-
-          echo "---- SHOW RUNNING SERVICES ----"
-          docker-compose ps
-
-          echo "---- DEPLOY COMPLETE ----"
+          
+          echo "Deployment completed!"
