@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   web:
-    image: ghcr.io/${GITHUB_USER}/devops-lab4:latest
+    build: .
     restart: always
     ports:
       - "8181:8181"
