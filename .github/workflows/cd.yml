@@ -1,19 +1,19 @@
-name: CD Deploy
+name: CD Pipeline
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: main
-
-    - name: Deploy to server
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy with Docker Compose
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: course.prafdin.ru
@@ -21,20 +21,104 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 2467
         script: |
-          cd /home/${{ secrets.SSH_USER }}/devops-lab4
+          echo "🚀 Starting Docker Compose deployment..."
           
-          echo "Updating repo..."
-          git fetch origin
-          git checkout main
-          git reset --hard origin/main
+          # Создаем директорию приложения
+          APP_DIR="/home/${{ secrets.SSH_USER }}/devops-lab4"
+          mkdir -p $APP_DIR
+          cd $APP_DIR
+          
+          # Копируем файлы docker-compose (без замены volumes)
+          echo "📋 Copying docker-compose files..."
+          
+          # Останавливаем текущий стек если есть
+          if [ -f docker-compose.yml ]; then
+            echo "⏹️  Stopping existing stack..."
+            docker-compose down || true
+          fi
+          
+          # Создаем docker-compose.yml на сервере
+          cat > docker-compose.yml << 'EOF'
+          version: '3.8'
 
-          echo "Login to GHCR"
+          services:
+            db:
+              image: postgres:13-alpine
+              environment:
+                POSTGRES_DB: lab4db
+                POSTGRES_USER: postgres
+                POSTGRES_PASSWORD: postgres
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              networks:
+                - app-network
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+              restart: unless-stopped
+
+            web:
+              image: ghcr.io/${{ github.repository }}:latest
+              environment:
+                DB_HOST: db
+                DB_PORT: 5432
+                DB_NAME: lab4db
+                DB_USER: postgres
+                DB_PASSWORD: postgres
+              ports:
+                - "8181:5000"
+              depends_on:
+                db:
+                  condition: service_healthy
+              networks:
+                - app-network
+              restart: unless-stopped
+
+          volumes:
+            postgres_data:
+
+          networks:
+            app-network:
+              driver: bridge
+          EOF
+          
+          # Логинимся в GitHub Container Registry
+          echo "🔐 Logging into GitHub Container Registry..."
           echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-          echo "Pulling latest image..."
-          docker pull ghcr.io/${{ github.repository }}:latest
-
-          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker compose down
-          echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker compose up -d --force-recreate
-
-          echo "Deployment finished."
+          
+          # Pull образа
+          echo "📥 Pulling Docker image..."
+          docker-compose pull web
+          
+          # Запускаем стек
+          echo "🚀 Starting Docker Compose stack..."
+          docker-compose up -d
+          
+          echo "⏳ Waiting for services to start..."
+          sleep 15
+          
+          # Проверяем статус
+          echo "📊 Container status:"
+          docker-compose ps
+          
+          # Health check
+          echo "🔍 Health check..."
+          for i in {1..5}; do
+            if curl -f http://localhost:8181/health; then
+              echo "✅ Deployment successful!"
+              echo "🌐 Application available at: http://app.tsyganova.course.prafdin.ru"
+              exit 0
+            else
+              echo "⏳ Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+          done
+          
+          echo "❌ Health check failed!"
+          echo "📜 Logs from web service:"
+          docker-compose logs web
+          echo "📜 Logs from db service:"
+          docker-compose logs db
+          exit 1
