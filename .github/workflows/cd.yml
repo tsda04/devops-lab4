@@ -1,0 +1,77 @@
+name: CD Pipeline with Docker Compose
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  push:
+    branches: [ lab4 ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy with Docker Compose
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: course.prafdin.ru
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 2467
+        script: |
+          echo "🚀 Начинаем деплой с Docker Compose..."
+          
+          # Переходим в директорию проекта
+          cd /home/${{ secrets.SSH_USER }}/devops-lab4
+          
+          # Обновляем код
+          echo "📥 Обновляем код..."
+          git fetch origin
+          git reset --hard origin/lab4
+          
+          # Логинимся в GitHub Container Registry
+          echo "🔐 Логинимся в GitHub Container Registry..."
+          echo "${{ secrets.GITHUBTOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          # Останавливаем и удаляем старые контейнеры
+          echo "🧹 Очищаем старые контейнеры..."
+          docker-compose down 2>/dev/null || echo "Контейнеров для остановки нет"
+          
+          # Подтягиваем свежий образ
+          echo "📦 Загружаем свежий образ..."
+          docker pull ghcr.io/${{ github.repository }}:latest
+          
+          # Запускаем приложение через Docker Compose
+          echo "🚀 Запускаем Docker Compose..."
+          GITHUB_USER=${{ github.repository_owner }} docker-compose up -d
+          
+          # Ждем запуска
+          echo "⏳ Ждем запуска приложения..."
+          sleep 10
+          
+          # Проверяем статус
+          echo "📊 Статус контейнеров:"
+          docker-compose ps
+          
+          # Health check
+          echo "🔍 Проверяем работоспособность..."
+          for i in {1..5}; do
+            if curl -f http://localhost:8181; then
+              echo "✅ Приложение успешно запущено!"
+              echo "🌐 Доступно по адресу: http://app.tsyganova.course.prafdin.ru"
+              echo "📊 Статистика посещений: http://app.tsyganova.course.prafdin.ru/visits"
+              exit 0
+            else
+              echo "Попытка $i/5 не удалась, ждем 5 секунд..."
+              sleep 5
+            fi
+          done
+          
+          echo "❌ Приложение не запустилось"
+          echo "Логи контейнеров:"
+          docker-compose logs
+          exit 1
