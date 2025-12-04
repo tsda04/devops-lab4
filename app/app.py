@@ -9,7 +9,7 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Users</title>
+    <title>Users1</title>
 </head>
 <body>
     <h1>Users</h1>
