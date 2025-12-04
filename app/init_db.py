@@ -6,7 +6,7 @@ conn = sqlite3.connect(db)
 cur = conn.cursor()
 
 cur.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, message TEXT)")
-cur.execute("INSERT INTO test(message) VALUES ('Hello from SQLite DB!11232345')")
+cur.execute("INSERT INTO test(message) VALUES ('Hello from SQLite DB111!')")
 conn.commit()
 conn.close()
 
