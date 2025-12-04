@@ -6,7 +6,7 @@ conn = sqlite3.connect(DB_FILE)
 cur = conn.cursor()
 
 # Удаляем старую таблицу, если есть
-cur.execute("DROP TABLE IF EXISTS users")
+# cur.execute("DROP TABLE IF EXISTS users")
 
 # Создаем таблицу заново
 cur.execute("""
