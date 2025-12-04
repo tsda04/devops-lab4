@@ -30,7 +30,7 @@ jobs:
             docker-compose down
 
             echo "Pulling new images..."
-            docker-compose pull
+            docker-compose pull -q
 
             echo "Cleaning old images..."
             docker image prune -f
