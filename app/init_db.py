@@ -1,14 +1,23 @@
 import sqlite3
 
-db = "/data/data.db"
+DB_FILE = "/data/data.db"
 
-conn = sqlite3.connect(db)
+conn = sqlite3.connect(DB_FILE)
 cur = conn.cursor()
 
-# Пересоздаём таблицу при каждом деплое
-# cur.execute("DROP TABLE IF EXISTS test")
-cur.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, message TEXT)")
-cur.execute("INSERT INTO test(message) VALUES ('Hello from SQLite DB UPDATED!')")
+# Удаляем старую таблицу, если есть
+cur.execute("DROP TABLE IF EXISTS users")
+
+# Создаем таблицу заново
+cur.execute("""
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+)
+""")
+
+# Добавим одного дефолтного пользователя
+cur.execute("INSERT INTO users(name) VALUES ('Admin')")
 
 conn.commit()
 conn.close()
